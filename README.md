@@ -22,3 +22,8 @@ Script Python em desenvolvimento para extrair dados de listas de desejos da Amaz
 - **Exportação Multi-Formato**:  
   - Suporte para CSV, Excel e Google Sheets.  
 
+## Capturas de Tela 📸
+
+![Captura de Tela do Programa](captura_wish_list.png)
+
+
