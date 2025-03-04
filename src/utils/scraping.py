@@ -32,6 +32,8 @@ def extrair_dados_itens(item, data_extracao):
     dados_item['imagem'] = item.find('img').get('src', 'Imagem não encontrada') if item.find('img') else 'Imagem não encontrada'
     dados_item['asin'] = extrair_codigo_asin(dados_item['link'])
     
+    #Essa conversão é para Amazon Brasileira. A amazon não permite misturar wishlist brasileira com a  estadunidense por exemplo, ou seja, o produto disponível em sua wishlist BR obrigatoriamente vem  convertido em BRL. Esse  tratamento abaixo visa resolver o problema da vírgula e ponto em formatos numéricos brasileiros.
+
     elemento_preco = item.find('span', {'class': 'a-price'})
     if elemento_preco:
         preco_texto = elemento_preco.find('span', {'aria-hidden': 'true'}).text.strip()
@@ -39,7 +41,6 @@ def extrair_dados_itens(item, data_extracao):
         preco_float = float(preco_limpo.replace(",",".") if preco_limpo else None)
     else:
         preco_float = None
-      
     dados_item['preco'] = preco_float
 
     dados_item['data_extracao'] = data_extracao
