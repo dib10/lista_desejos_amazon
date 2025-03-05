@@ -30,5 +30,5 @@ try:
             print(f'----------')
            
 finally:
-    driver.quit()
     print(f'\nTempo total do script: {time.time() - inicio_script:.2f} segundos')
+    driver.quit()
