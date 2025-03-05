@@ -2,9 +2,10 @@ from config.config_script import configurar_driver, url
 from utils.scraping import *
 import time
 
-
+# Inicialização
 inicio_script = time.time()
 driver = configurar_driver() 
+
 try:
     driver.get(url)
     
@@ -16,7 +17,7 @@ try:
     html = driver.page_source
     soup = BeautifulSoup(html, 'html.parser')
     
-    nome_lista = extrair_nome_lista(soup)
+    nome_lista_desejos = extrair_nome_lista(soup)
 
 
     # Processamento dos itens

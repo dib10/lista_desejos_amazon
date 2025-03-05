@@ -3,8 +3,8 @@ from datetime import datetime
 import re
 
 def extrair_nome_lista(soup):
-    nome_lista = soup.find('span', {'id': 'profile-list-name'})
-    return nome_lista.text if nome_lista else 'Nome não encontrado'
+    nome_lista_desejos = soup.find('span', {'id': 'profile-list-name'})
+    return nome_lista_desejos.text if nome_lista_desejos else 'Nome não encontrado'
 
 def extrair_itens_lista(soup):
     itens = soup.find_all('li', {'class': 'g-item-sortable'})
@@ -45,8 +45,6 @@ def extrair_dados_itens(item, data_extracao):
 
     dados_item['data_extracao'] = data_extracao
     return dados_item
-
-import json
 
 
 
