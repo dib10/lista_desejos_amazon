@@ -46,6 +46,9 @@ def extrair_dados_itens(item, data_extracao):
     dados_item['data_extracao'] = data_extracao
     return dados_item
 
+import json
+
+
 
 
 
