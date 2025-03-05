@@ -26,6 +26,6 @@ Script Python em desenvolvimento para extrair dados de listas de desejos da Amaz
 
 ![Captura de Tela do Programa](captura_wish_list.png)
 ![Captura de Tela do Programa](tempo_total.png)
-)
+
 
 
