@@ -1,11 +1,11 @@
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 from datetime import datetime
 import re
-import time
-from selenium.webdriver.common.by import By
-from selenium.common.exceptions import NoSuchElementException
-from .config import configurar_driver 
-
 #=======================================
 # FUNÇÕES AUXILIARES DE EXTRAÇÃO
 #=======================================
@@ -73,49 +73,45 @@ def extrair_itens_lista(soup):
 #=======================================
 # FUNÇÃO PRINCIPAL 
 #=======================================
-def executar_scraping(url: str):
+def executar_scraping(url: str) -> dict:
     """
-    Função principal que orquestra o scraping.
-    Abre a URL, verifica se a lista existe e extrai os dados.
+    Inicia o driver, raspa os dados da URL e fecha o driver.
+    Garante que cada execução seja isolada.
     """
-    driver = None
+    driver = None  
     try:
-        driver = configurar_driver()
+        
+        chrome_options = Options()
+        chrome_options.add_argument("--headless")  
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        
+        driver = webdriver.Chrome(options=chrome_options)
+        
         driver.get(url)
-        
-        time.sleep(2)
 
-        try:
-            # Tentando encontrar um elemento que só existe na página de erro da Amazon.
-            erro_h1 = driver.find_element(By.CSS_SELECTOR, "h1.a-spacing-base")
-            if "não encontrada" in erro_h1.text or "not found" in erro_h1.text.lower():
-                return {
-                    "error": "A lista de desejos não foi encontrada ou é privada.", 
-                    "error_code": "WISHLIST_NOT_FOUND"
-                }
-        except NoSuchElementException:
-            # Se não encontrou o elemento de erro, significa que a página é válida.
-            pass
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.ID, "profile-list-name"))
+        )
         
-        soup = BeautifulSoup(driver.page_source, 'html.parser')
-        
-        nome_lista = extrair_nome_lista(soup)
-        itens = extrair_itens_lista(soup)
-        
-        # Se o nome não foi encontrado e não tem itens provavelmente é uma lista privada ou vazia
-        if nome_lista == 'Nome não encontrado' and not itens:
-             return {
-                "error": "A lista de desejos pode estar vazia, ser privada ou não foi possível carregá-la corretamente.", 
-                "error_code": "WISHLIST_EMPTY_OR_PRIVATE"
-            }
+        page_content = driver.page_source
+        soup = BeautifulSoup(page_content, 'html.parser')
+
+        nome_da_lista_tag = soup.find('span', {'id': 'profile-list-name'})
+        if not nome_da_lista_tag:
+            return {"error": "Nome da wishlist não encontrado. A página pode ter mudado ou a lista é privada.", "error_code": "WISHLIST_NOT_FOUND"}
+
+        nome_da_lista = nome_da_lista_tag.get_text(strip=True)
+        itens_raspados = extrair_dados_itens(soup)
 
         return {
-            "nome_da_lista": nome_lista,
-            "total_itens_encontrados": len(itens),
-            "itens": itens
+            "nome_da_lista": nome_da_lista,
+            "itens": itens_raspados
         }
+
     except Exception as e:
-        return {"error": f"Ocorreu um erro durante o scraping: {str(e)}"}
+        return {"error": f"Ocorreu um erro durante o scraping: {str(e)}", "error_code": "SCRAPING_ERROR"}
+
     finally:
         if driver:
-            driver.quit()
+            driver.quit()  

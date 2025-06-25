@@ -6,7 +6,11 @@ from sqlalchemy.orm import Session, joinedload
 from fastapi.concurrency import run_in_threadpool
 from typing import List, Dict, Any
 from scraper.core import executar_scraping
-from db.models import Produto, HistoricoPreco, SessionLocal
+from db.models import Produto, HistoricoPreco, Wishlist, SessionLocal
+from sqlalchemy.orm import Session, joinedload, selectinload
+
+
+
 
 # ---------------------------------
 # MODELOS DE DADOS (PYDANTIC)
@@ -39,6 +43,17 @@ class ProdutoResumoResponse(BaseModel):
     class Config:
         from_attributes = True
 
+class WishlistResponse(BaseModel):
+    id: int
+    nome_wishlist: str
+    url: HttpUrl
+    class Config:
+        from_attributes = True
+
+class WishlistCreate(BaseModel):
+    nome_wishlist: str
+    url: HttpUrl
+
 # ---------------------------------
 # SETUP DO ROUTER E BANCO 
 # ---------------------------------
@@ -59,10 +74,9 @@ def get_db():
 # LÓGICA DE SERVIÇO  
 # ---------------------------------
 
-def processar_dados_raspados_no_db(db: Session, dados_raspados: Dict[str, Any]) -> int:
+def processar_dados_raspados_no_db(db: Session, dados_raspados: Dict[str, Any], wishlist_id: int) -> int:
     """
-    Processa os dados de uma raspagem, salvando produtos e históricos no banco.
-    Retorna a quantidade de itens processados com preço.
+    Processa os dados de uma raspagem, salvando produtos e históricos no banco, associando-os a uma wishlist.
     """
     itens_processados = 0
     itens_para_processar = dados_raspados.get("itens", [])
@@ -72,7 +86,7 @@ def processar_dados_raspados_no_db(db: Session, dados_raspados: Dict[str, Any]) 
 
     # Mapeia ASINs para produtos existentes para evitar múltiplas queries no loop
     asins = {item['asin'] for item in itens_para_processar}
-    produtos_existentes_map = {p.asin: p for p in db.query(Produto).filter(Produto.asin.in_(asins)).all()}
+    produtos_existentes_map = {p.asin: p for p in db.query(Produto).filter(Produto.wishlist_id == wishlist_id, Produto.asin.in_(asins)).all()}
 
     for item in itens_para_processar:
         produto = produtos_existentes_map.get(item['asin'])
@@ -82,7 +96,8 @@ def processar_dados_raspados_no_db(db: Session, dados_raspados: Dict[str, Any]) 
                 asin=item['asin'],
                 nome=item['nome'],
                 link_produto=item['link'],
-                link_imagem=item['imagem']
+                link_imagem=item['imagem'],
+                wishlist_id=wishlist_id
             )
             db.add(produto)
             db.flush()  
@@ -94,7 +109,8 @@ def processar_dados_raspados_no_db(db: Session, dados_raspados: Dict[str, Any]) 
         novo_historico = HistoricoPreco(
             produto_id=produto.id,
             preco=item['preco'],
-            data_extracao=data_extracao_obj
+            data_extracao=data_extracao_obj,
+            wishlist_id=wishlist_id
         )
         db.add(novo_historico)
         itens_processados += 1
@@ -125,47 +141,98 @@ def tratar_erros_scraper(dados_raspados: Dict[str, Any]):
 # ---------------------------------
 # ENDPOINTS 
 # ---------------------------------
+@router.post("/wishlists/", response_model=WishlistResponse, status_code=201, summary="Registrar uma Nova Wishlist (Robusto)")
+async def create_wishlist(wishlist_payload: WishlistCreate, db: Session = Depends(get_db)): 
+    """
+    Registra uma nova wishlist, validando sua acessibilidade antes de salvar.
+    """
+    wishlist_url = str(wishlist_payload.url)
 
-@router.post("/scrape-wishlist/")
-async def scrape_wishlist(payload: WishlistPayload, db: Session = Depends(get_db)):
-    """
-    Endpoint para iniciar a raspagem de uma wishlist, salvar os produtos e seu histórico de preço.
-    """
-    wishlist_url = str(payload.url)
     validar_url_wishlist(wishlist_url)
 
+    db_wishlist = db.query(Wishlist).filter(Wishlist.url == wishlist_url).first()
+    if db_wishlist:
+        raise HTTPException(status_code=400, detail="Uma wishlist com esta URL já está registrada.")
+    
     try:
+        print(f"INFO: Validando acessibilidade da wishlist: {wishlist_url}")
         dados_raspados = await run_in_threadpool(executar_scraping, wishlist_url)
         
         tratar_erros_scraper(dados_raspados)
-
-        itens_processados = processar_dados_raspados_no_db(db, dados_raspados)
         
-        return {
-            "message": "Scraping concluído com sucesso!",
-            "wishlist_name": dados_raspados.get('nome_da_lista'),
-            "items_processed": itens_processados
-        }
+        if not dados_raspados.get("itens"):
+            raise HTTPException(status_code=400, detail="A wishlist parece estar vazia ou é privada.")
 
     except HTTPException as http_exc:
         raise http_exc 
     except Exception as e:
-        raise HTTPException(status_code=500, detail="Ocorreu um erro inesperado na API ao processar a wishlist.")
+        raise HTTPException(status_code=500, detail=f"Não foi possível validar a wishlist. Erro: {e}")
+    
+    nova_wishlist = Wishlist(
+        url=wishlist_url,
+        nome_wishlist=wishlist_payload.nome_wishlist 
+    )
+    db.add(nova_wishlist)
+    db.commit()
+    db.refresh(nova_wishlist)
+    
+    return nova_wishlist
 
+@router.post("/wishlists/{wishlist_id}/scrape", summary="HU-07: Disparar Atualização de uma Wishlist")
+async def scrape_existing_wishlist(wishlist_id: int, db: Session = Depends(get_db)):
+    """
+    Inicia uma nova varredura de preços para uma wishlist já registrada.
+    """
+    wishlist = db.query(Wishlist).filter(Wishlist.id == wishlist_id).first()
+    if not wishlist:
+        raise HTTPException(status_code=404, detail="Wishlist não encontrada.")
 
-@router.get("/products/{asin}/history", response_model=ProdutoComHistoricoResponse)
-def get_product_history(asin: str, db: Session = Depends(get_db)):
-    """Busca um produto pelo seu ASIN e retorna seu histórico de preços."""
-    produto = db.query(Produto).options(joinedload(Produto.historico_precos)).filter(Produto.asin == asin).first()
+    try:
+        dados_raspados = await run_in_threadpool(executar_scraping, wishlist.url)
+        tratar_erros_scraper(dados_raspados)
+
+        itens_processados = processar_dados_raspados_no_db(
+            db=db, 
+            dados_raspados=dados_raspados, 
+            wishlist_id=wishlist_id
+        )
+
+        return {
+            "message": f"Scraping da wishlist '{wishlist.nome_wishlist}' concluído!",
+            "items_processed": itens_processados
+        }
+    except HTTPException as http_exc:
+        raise http_exc
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ocorreu um erro inesperado ao processar a wishlist: {e}")
+
+@router.get("/wishlists/{wishlist_id}/products", response_model = List[ProdutoResumoResponse],summary="Listar Produtos de uma Wishlist")
+def get_products_from_wishlist(wishlist_id: int, db: Session = Depends(get_db)):
+    """
+    Retorna uma lista resumida de produtos de uma wishlist específica.
+    """
+    wishlist = db.query(Wishlist).filter(Wishlist.id == wishlist_id).first()
+    if not wishlist:
+        raise HTTPException(status_code=404, detail="Wishlist não encontrada.")
+    return db.query(Produto).filter(Produto.wishlist_id == wishlist_id).all()
+
+@router.get("/wishlists/{wishlist_id}/products/{asin}/history", response_model=ProdutoComHistoricoResponse, summary="Consultar Histórico de Produto na Wishlist")
+def get_product_history_in_wishlist(
+    wishlist_id: int, 
+    asin: str, 
+    db: Session = Depends(get_db)
+):
+    """
+    Retorna o histórico de preços de um produto específico em uma wishlist.
+    """
+    produto = db.query(Produto).options(
+        selectinload(Produto.historico_precos)
+    ).filter(
+        Produto.wishlist_id == wishlist_id, 
+        Produto.asin == asin
+    ).first()
     
     if not produto:
-        raise HTTPException(status_code=404, detail=f"Produto com ASIN '{asin}' não encontrado.")
+        raise HTTPException(status_code=404, detail=f"Produto com ASIN '{asin}' não encontrado nesta wishlist.")
     
     return produto
-
-
-@router.get("/products/", response_model=List[ProdutoResumoResponse])
-def get_all_products(db: Session = Depends(get_db)):
-    """Lista um resumo de todos os produtos registrados no banco de dados."""
-    produtos = db.query(Produto).all()
-    return produtos
