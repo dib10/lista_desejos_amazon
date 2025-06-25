@@ -102,7 +102,7 @@ def executar_scraping(url: str):
         nome_lista = extrair_nome_lista(soup)
         itens = extrair_itens_lista(soup)
         
-        # Se o nome não foi encontrado e não há itens, provavelmente é uma lista privada ou vazia.
+        # Se o nome não foi encontrado e não tem itens provavelmente é uma lista privada ou vazia
         if nome_lista == 'Nome não encontrado' and not itens:
              return {
                 "error": "A lista de desejos pode estar vazia, ser privada ou não foi possível carregá-la corretamente.", 
